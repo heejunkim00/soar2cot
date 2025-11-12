@@ -1,0 +1,347 @@
+{
+  "summary": {
+    "total_rows": 4926487,
+    "correct_solutions": 28146,
+    "correct_percentage": 0.5713198877821052,
+    "original_arc_tasks": 400,
+    "solved_tasks": 344,
+    "solved_percentage": 86.0,
+    "unsolved_tasks": 56
+  },
+  "task_statistics": {
+    "mean_solutions_per_task": 81.81976744186046,
+    "median_solutions_per_task": 41.0,
+    "min_solutions": 1,
+    "max_solutions": 948,
+    "std_solutions": 102.65113760332963
+  },
+  "top_20_tasks": [
+    {
+      "task_id": "445eab21",
+      "total_solutions": 948,
+      "unique_models": 5,
+      "max_generation": 6
+    },
+    {
+      "task_id": "be94b721",
+      "total_solutions": 591,
+      "unique_models": 5,
+      "max_generation": 6
+    },
+    {
+      "task_id": "1cf80156",
+      "total_solutions": 551,
+      "unique_models": 5,
+      "max_generation": 6
+    },
+    {
+      "task_id": "bb43febb",
+      "total_solutions": 417,
+      "unique_models": 5,
+      "max_generation": 6
+    },
+    {
+      "task_id": "4347f46a",
+      "total_solutions": 398,
+      "unique_models": 5,
+      "max_generation": 6
+    },
+    {
+      "task_id": "50cb2852",
+      "total_solutions": 395,
+      "unique_models": 5,
+      "max_generation": 6
+    },
+    {
+      "task_id": "d631b094",
+      "total_solutions": 380,
+      "unique_models": 5,
+      "max_generation": 6
+    },
+    {
+      "task_id": "5614dbcf",
+      "total_solutions": 375,
+      "unique_models": 5,
+      "max_generation": 6
+    },
+    {
+      "task_id": "a87f7484",
+      "total_solutions": 355,
+      "unique_models": 5,
+      "max_generation": 6
+    },
+    {
+      "task_id": "a740d043",
+      "total_solutions": 347,
+      "unique_models": 5,
+      "max_generation": 6
+    },
+    {
+      "task_id": "f8ff0b80",
+      "total_solutions": 328,
+      "unique_models": 5,
+      "max_generation": 6
+    },
+    {
+      "task_id": "913fb3ed",
+      "total_solutions": 326,
+      "unique_models": 5,
+      "max_generation": 6
+    },
+    {
+      "task_id": "d10ecb37",
+      "total_solutions": 313,
+      "unique_models": 5,
+      "max_generation": 6
+    },
+    {
+      "task_id": "b1948b0a",
+      "total_solutions": 306,
+      "unique_models": 5,
+      "max_generation": 6
+    },
+    {
+      "task_id": "23b5c85d",
+      "total_solutions": 289,
+      "unique_models": 5,
+      "max_generation": 6
+    },
+    {
+      "task_id": "aabf363d",
+      "total_solutions": 289,
+      "unique_models": 4,
+      "max_generation": 6
+    },
+    {
+      "task_id": "08ed6ac7",
+      "total_solutions": 282,
+      "unique_models": 5,
+      "max_generation": 6
+    },
+    {
+      "task_id": "1f85a75f",
+      "total_solutions": 272,
+      "unique_models": 5,
+      "max_generation": 6
+    },
+    {
+      "task_id": "4258a5f9",
+      "total_solutions": 262,
+      "unique_models": 5,
+      "max_generation": 6
+    },
+    {
+      "task_id": "d0f5fe59",
+      "total_solutions": 255,
+      "unique_models": 5,
+      "max_generation": 6
+    }
+  ],
+  "bottom_20_tasks": [
+    {
+      "task_id": "f5b8619d",
+      "total_solutions": 4,
+      "unique_models": 2,
+      "max_generation": 6
+    },
+    {
+      "task_id": "56dc2b01",
+      "total_solutions": 4,
+      "unique_models": 1,
+      "max_generation": 6
+    },
+    {
+      "task_id": "82819916",
+      "total_solutions": 4,
+      "unique_models": 2,
+      "max_generation": 6
+    },
+    {
+      "task_id": "ec883f72",
+      "total_solutions": 3,
+      "unique_models": 2,
+      "max_generation": 6
+    },
+    {
+      "task_id": "8d510a79",
+      "total_solutions": 3,
+      "unique_models": 3,
+      "max_generation": 6
+    },
+    {
+      "task_id": "e73095fd",
+      "total_solutions": 3,
+      "unique_models": 2,
+      "max_generation": 6
+    },
+    {
+      "task_id": "3befdf3e",
+      "total_solutions": 3,
+      "unique_models": 1,
+      "max_generation": 6
+    },
+    {
+      "task_id": "db93a21d",
+      "total_solutions": 3,
+      "unique_models": 1,
+      "max_generation": 6
+    },
+    {
+      "task_id": "7c008303",
+      "total_solutions": 2,
+      "unique_models": 1,
+      "max_generation": 6
+    },
+    {
+      "task_id": "6ecd11f4",
+      "total_solutions": 2,
+      "unique_models": 1,
+      "max_generation": 6
+    },
+    {
+      "task_id": "137eaa0f",
+      "total_solutions": 2,
+      "unique_models": 2,
+      "max_generation": 6
+    },
+    {
+      "task_id": "f35d900a",
+      "total_solutions": 2,
+      "unique_models": 1,
+      "max_generation": 6
+    },
+    {
+      "task_id": "c8cbb738",
+      "total_solutions": 2,
+      "unique_models": 2,
+      "max_generation": 6
+    },
+    {
+      "task_id": "4c5c2cf0",
+      "total_solutions": 2,
+      "unique_models": 2,
+      "max_generation": 6
+    },
+    {
+      "task_id": "80af3007",
+      "total_solutions": 2,
+      "unique_models": 2,
+      "max_generation": 6
+    },
+    {
+      "task_id": "72322fa7",
+      "total_solutions": 1,
+      "unique_models": 1,
+      "max_generation": 3
+    },
+    {
+      "task_id": "673ef223",
+      "total_solutions": 1,
+      "unique_models": 1,
+      "max_generation": 6
+    },
+    {
+      "task_id": "b0c4d837",
+      "total_solutions": 1,
+      "unique_models": 1,
+      "max_generation": 3
+    },
+    {
+      "task_id": "2c608aff",
+      "total_solutions": 1,
+      "unique_models": 1,
+      "max_generation": 6
+    },
+    {
+      "task_id": "e509e548",
+      "total_solutions": 1,
+      "unique_models": 1,
+      "max_generation": 6
+    }
+  ],
+  "model_statistics": [
+    {
+      "model": "Mistral-Large-Instruct-2407",
+      "total_solutions": 9357,
+      "tasks_solved": 336
+    },
+    {
+      "model": "Qwen2.5-Coder-32B-Instruct",
+      "total_solutions": 7733,
+      "tasks_solved": 301
+    },
+    {
+      "model": "Qwen2.5-72B-Instruct",
+      "total_solutions": 7175,
+      "tasks_solved": 315
+    },
+    {
+      "model": "Qwen2.5-Coder-14B-Instruct",
+      "total_solutions": 2495,
+      "tasks_solved": 217
+    },
+    {
+      "model": "Qwen2.5-Coder-7B-Instruct",
+      "total_solutions": 1386,
+      "tasks_solved": 169
+    }
+  ],
+  "unsolved_task_ids": [
+    "045e512c",
+    "09629e4f",
+    "0e206a2e",
+    "11852cab",
+    "150deff5",
+    "1f0c79e5",
+    "234bbc79",
+    "264363fd",
+    "2dd70a9a",
+    "3345333e",
+    "36d67576",
+    "39e1d7f9",
+    "4290ef0e",
+    "447fd412",
+    "4612dd53",
+    "469497ad",
+    "50846271",
+    "508bd3b6",
+    "539a4f51",
+    "57aa92db",
+    "5ad4f10b",
+    "5daaa586",
+    "6a1e5592",
+    "6aa20dc0",
+    "6d58a25d",
+    "6e19193c",
+    "73251a56",
+    "7837ac64",
+    "7ddcd7ec",
+    "7df24a62",
+    "8403a5d5",
+    "846bdb03",
+    "8731374e",
+    "890034e9",
+    "8a004b2b",
+    "90f3ed37",
+    "97a05b5b",
+    "9aec4887",
+    "9d9215db",
+    "a64e4611",
+    "a78176bb",
+    "a8c38be5",
+    "aba27056",
+    "b190f7f5",
+    "b527c5c6",
+    "b775ac94",
+    "d07ae81c",
+    "d22278a0",
+    "e40b9e2f",
+    "e5062a87",
+    "e6721834",
+    "e8dc4411",
+    "f15e1fac",
+    "f1cefba8",
+    "f8c80d96",
+    "fcc82909"
+  ]
+}

@@ -1,0 +1,29 @@
+그러면 지금 
+
+
+
+이건 SOAR라는 논문에서 학습시킨 데이터셋인데 https://huggingface.co/datasets/julien31/soar_arc_train_5M
+/home/ubuntu/arc-lang-public/data 여기 디렉토리에 다운 받아주고 데이터가 어떻게 구성되어 있는 지 자세히 설명해줘
+
+
+그러면 기존 ARC 데이터셋과 구성이 어떻게 다른거야? 
+
+/data/m-soar/soar_arc_train_5M
+
+그러면 SOAR 데이터셋, ARC 데이터셋, jeremy 실행후 생성되는 데이터 셋에 대한 데이터 구성과 차이를 자세히 설명해줘 
+
+
+hindisight 데이터, original에서 task 수와 다양한 데이터 분포 분석을 하고 싶어 데이터를 불러와서 /home/ubuntu/arc-lang-public/heejun
+이 디렉토리 안에서 데이터 분석코드를 만들어줘 그리고 코드를 짜기 전에 먼저 어떻게 데이터를 분석할 지 논의해 보자 
+
+현재 jeremy 코드는 ARC 데이터만 주어졌을 때 instruction을 만들고 정답을 맞추는 instruction을 추출하는 것인데 
+내가 최종적으로 하고 싶은 것은 SOAR 데이터셋에 주어진 
+
+
+
+그러면 SOAR 데이터에 hindisight relabeling이 된 데이터가 포함 되었는지 확인하고 싶은데 
+
+그러니까 correct_test_input이라는 column이 true일 떄 test 데이터에 대해서 올바른 solution이였다는거야? 
+
+  correct_train_input: [True, True, True, True, True]
+  correct_test_input: [True]
