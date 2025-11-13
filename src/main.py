@@ -24,6 +24,20 @@ class InstructionsResponse(BaseModel):
     )
 
 
+class StructuredInstructionsResponse(BaseModel):
+    """Given the input / output examples, provide analysis and instructions in two separate parts."""
+
+    input_output_analysis: str = Field(
+        ...,
+        description="Detailed analysis of patterns observed in the input grids and output grids. Describe shapes, colors, positions, symmetries, relationships, and what changes between input and output.",
+    )
+
+    transformation_method: str = Field(
+        ...,
+        description="Step-by-step instructions for how to transform any input grid into the correct output grid. Must be clear, general, and applicable to all training examples.",
+    )
+
+
 class ReviseInstructionsResponse(BaseModel):
     """Given the input / output examples and the failed attempts following the previous instructions, provide revised step by step instructions for how to transform the input grids into output grids."""
 
@@ -46,53 +60,12 @@ class GridResponse(BaseModel):
     )
 
 
-USE_EXAMPLE_INSTRUCTIONS = False
-
-EXAMPLE_INSTRUCTIONS = """
-Here are example instructions that have worked in the past:
-<example instructions>
-1. Find the background color and ignore that.
-2. Take the biggest contiguous shape general shape. This is the outline for the output grid.
-3. Fill that largest shape like Tetris with the smaller shapes in ways that they fit together. You will not need to rotate any of the smaller shapes. They each will slot in so that the inner shape is filled and they will also fill in the gaps on the outside of the inner shape.
-4. You will be left with a rectangle the height and width of the biggest starting shape.
-</example instructions>
-"""
-
-EXAMPLE_INSTRUCTIONS_STR = (
-    "" if not USE_EXAMPLE_INSTRUCTIONS else f"\n\n{EXAMPLE_INSTRUCTIONS}\n\n"
+# Import all prompts from centralized prompts.py
+from src.prompts import (
+    AGENT_FOLLOW_INSTRUCTIONS_PROMPT,
+    INTUITIVE_PROMPT,
+    INTUITIVE_PROMPT_WITH_CODE,
 )
-
-INTUITIVE_PROMPT = f"""
-You are participating in a puzzle solving competition. You are an expert at solving puzzles.
-
-Find the common pattern that transforms each input grid into its corresponding output grid, based on the training examples below.
-
-Your task is to write clear instructions that describe this transformation pattern. These instructions must:
-- Apply consistently to ALL training examples (the same rule works for every input→output pair)
-- Be general enough to work on new test cases
-- Be intuitive and easy to understand
-- Describe the pattern without referencing specific example numbers or positions
-
-The transformation pattern should be simple and logical - these puzzles are designed to have elegant, intuitive solutions that humans can readily grasp.
-
-Write your instructions as a clear, step-by-step process that someone could follow to transform any input grid into the correct output grid.
-{EXAMPLE_INSTRUCTIONS_STR}
-Here are the training examples and test input grids:
-"""
-
-
-AGENT_FOLLOW_INSTRUCTIONS_PROMPT = """
-You are an expert puzzle solver in a competition.
-
-You will receive:
-1. Step-by-step instructions for transforming input grids into output grids
-2. Training examples showing these instructions applied correctly
-3. A test input grid to solve
-
-Your task: Apply the given instructions precisely to transform the test input grid into its output grid.
-
-The training examples demonstrate how the instructions work - use them to understand the pattern, then follow the exact same process for the test input.
-""".strip()
 
 func_to_llm = {
     get_next_message_openai: {
@@ -247,6 +220,72 @@ def contents_from_challenge(
     return contents
 
 
+def contents_from_python_code(python_code: str) -> list[dict]:
+    """
+    Convert Python code to prompt content format.
+
+    Args:
+        python_code: The Python code string (SOAR transform function)
+
+    Returns:
+        List of content dictionaries with the formatted Python code section
+    """
+    return [
+        {
+            "type": "input_text",
+            "text": "\n--Reference Python Solution--",
+        },
+        {
+            "type": "input_text",
+            "text": f"```python\n{python_code}\n```",
+        },
+        {
+            "type": "input_text",
+            "text": "--End of Reference Solution--",
+        },
+    ]
+
+
+def contents_from_challenge_with_code(
+    training_examples: list[Example],
+    training_example_attempts: list[GRID] | None,
+    test_inputs: list[Input],
+    include_base64: bool,
+    use_diffs: bool,
+    python_code: str,
+) -> list[dict]:
+    """
+    Generate prompt contents from challenge data WITH Python code reference (for SOAR).
+
+    This extends the standard contents_from_challenge by adding a Python code section
+    after the test inputs.
+
+    Args:
+        training_examples: List of training input-output pairs
+        training_example_attempts: Optional predicted outputs for training examples
+        test_inputs: List of test inputs
+        include_base64: Whether to include base64 image representations
+        use_diffs: Whether to include grid diffs
+        python_code: The reference Python implementation (SOAR code)
+
+    Returns:
+        List of content dictionaries including training examples, test inputs, and Python code
+    """
+    # Get standard challenge contents
+    contents = contents_from_challenge(
+        training_examples=training_examples,
+        training_example_attempts=training_example_attempts,
+        test_inputs=test_inputs,
+        include_base64=include_base64,
+        use_diffs=use_diffs,
+    )
+
+    # Add Python code section
+    contents.extend(contents_from_python_code(python_code))
+
+    return contents
+
+
 PERFECT_PROMPT = """
 These instructions are a guide to help you get the correct output grid.
 If you think there is an error with the instructions that would cause you to get the wrong output grid, ignore that part of the instructions.
@@ -297,6 +336,7 @@ async def output_grid_from_instructions(
             ],
         }
     ]
-    return (
-        await get_next_structure(structure=GridResponse, messages=messages, model=model)
-    ).grid
+    grid_response, is_truncated = await get_next_structure(
+        structure=GridResponse, messages=messages, model=model
+    )
+    return grid_response.grid, is_truncated

@@ -144,8 +144,8 @@ gemini_client = genai.Client(
 local_vllm_client = AsyncOpenAI(
     api_key="EMPTY",  # vLLM doesn't require API key
     base_url=os.environ.get("LOCAL_VLLM_URL", "http://localhost:8000/v1"),
-    timeout=2500,
-    max_retries=2,
+    timeout=60,  # Reduced from 2500 to 60 seconds to prevent deadlock
+    max_retries=3,  # Increased retries from 2 to 3
 )
 
 # Semaphore to limit concurrent API calls to 100
@@ -158,7 +158,7 @@ async def get_next_structure(
     structure: type[BMType],  # type[T]
     model: Model,
     messages: list,
-) -> BMType:
+) -> tuple[BMType, bool]:  # Returns (result, is_truncated)
     res_id = random_str(k=6)
 
     with log.span(
@@ -176,6 +176,7 @@ async def get_next_structure(
         )
 
         async with API_SEMAPHORE:
+            is_truncated = False  # Default for non-local models
             if model in [
                 Model.o4_mini,
                 Model.o3,
@@ -205,7 +206,7 @@ async def get_next_structure(
                     structure=structure, model=model, messages=messages
                 )
             elif model in [Model.local_gpt_oss_20b]:
-                res = await _get_next_structure_local_vllm(
+                res, is_truncated = await _get_next_structure_local_vllm(
                     structure=structure, model=model, messages=messages
                 )
             elif model in [
@@ -253,9 +254,10 @@ async def get_next_structure(
                 request_id=res_id,
                 response=response_dump,
                 response_keys=response_keys,
+                is_truncated=is_truncated,
             )
 
-            return res
+            return res, is_truncated
 
 
 async def _get_next_structure_openai(
@@ -828,8 +830,8 @@ async def _get_next_structure_local_vllm(
         use_json_object=True,
     )
 
-    # Progressive max_tokens strategy: 8000 -> 12000 -> 16000 -> 20000 (limit at 20k)
-    max_tokens_list = [8000, 12000, 16000, 20000]
+    # Progressive max_tokens strategy: 2000 -> 4000 -> 6000 -> 8000 (reduced for faster response)
+    max_tokens_list = [2000, 4000, 6000, 8000]
     last_error = None
 
     for attempt, max_tokens in enumerate(max_tokens_list, 1):
@@ -843,8 +845,8 @@ async def _get_next_structure_local_vllm(
                 messages=messages,
                 response_format={"type": "json_object"},
                 max_tokens=max_tokens,
-                temperature=0.3,  # Lower temperature to reduce reasoning mode
-                extra_body={"skip_special_tokens": True},  # Try to avoid reasoning tokens
+                temperature=0.3,  # Lower temperature for consistent output
+                extra_body={"reasoning_effort": "low"},  # vLLM 0.11.0 supports reasoning_effort
             )
 
             # Parse the JSON response
@@ -882,7 +884,8 @@ async def _get_next_structure_local_vllm(
             if attempt > 1:
                 print(f"[DEBUG] SUCCESS on attempt {attempt} with max_tokens={max_tokens}")
 
-            return output
+            # Return output and whether it was truncated (finish_reason == 'length')
+            return output, (finish_reason == 'length')
 
         except json.JSONDecodeError as e:
             last_error = Exception(f"Failed to parse JSON: {e}\nResponse: {content[:500] if content else 'None'}")

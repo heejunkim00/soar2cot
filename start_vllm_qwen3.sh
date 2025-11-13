@@ -1,21 +1,21 @@
 #!/bin/bash
 
-# vLLM Server Startup Script for GPT-OSS 20B
+# vLLM Server Startup Script for Qwen3-32B
 # Runs on GPU 0, 1, 2, 3 with tensor parallelism
 
 set -e
 
 echo "==================================================="
-echo "Starting vLLM Server for GPT-OSS 20B"
+echo "Starting vLLM Server for Qwen3-32B"
 echo "==================================================="
 
 # Configuration
-MODEL_NAME="openai/gpt-oss-20b"
+MODEL_NAME="Qwen/Qwen3-32B"
 GPUS="0,1,2,3"
 TENSOR_PARALLEL=4
 PORT=8000
 LOG_DIR="/data/arclang/logs"
-LOG_FILE="$LOG_DIR/vllm_server_$(date +%Y%m%d_%H%M%S).log"
+LOG_FILE="$LOG_DIR/vllm_qwen3_$(date +%Y%m%d_%H%M%S).log"
 
 # Create log directory
 mkdir -p "$LOG_DIR"
@@ -37,11 +37,11 @@ else
 fi
 
 echo ""
-echo "Starting vLLM server..."
+echo "Starting vLLM server with reasoning mode..."
 echo "View logs: tail -f $LOG_FILE"
 echo ""
 
-# Start vLLM server with optimized memory settings
+# Start vLLM server with reasoning support
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 CUDA_VISIBLE_DEVICES=$GPUS python -m vllm.entrypoints.openai.api_server \
@@ -49,8 +49,8 @@ CUDA_VISIBLE_DEVICES=$GPUS python -m vllm.entrypoints.openai.api_server \
     --tensor-parallel-size $TENSOR_PARALLEL \
     --port $PORT \
     --trust-remote-code \
-    --max-model-len 16384 \
-    --gpu-memory-utilization 0.85 \
+    --max-model-len 8192 \
+    --gpu-memory-utilization 0.9 \
     --max-num-seqs 128 \
     --disable-custom-all-reduce \
     2>&1 | tee "$LOG_FILE"

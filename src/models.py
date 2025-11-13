@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -154,6 +155,49 @@ Input:
         from src.viz import base64_from_grid
 
         return base64_from_grid(grid=grid)
+
+    @staticmethod
+    def load(task_id: str, data_dir: Path) -> "Challenge":
+        """
+        Load ARC challenge from JSON file.
+
+        Args:
+            task_id: ARC task ID (e.g., "007bbfb7")
+            data_dir: Directory containing ARC dataset files
+
+        Returns:
+            Challenge object with training and test data
+
+        Raises:
+            FileNotFoundError: If challenges file not found
+            ValueError: If task_id not found in dataset
+        """
+        # Look for the challenges file in the data directory
+        challenges_path = data_dir / "arc-agi_training_challenges.json"
+
+        if not challenges_path.exists():
+            raise FileNotFoundError(
+                f"ARC challenges file not found at {challenges_path}"
+            )
+
+        with open(challenges_path) as f:
+            challenges = json.load(f)
+
+        if task_id not in challenges:
+            raise ValueError(
+                f"Task {task_id} not found in ARC dataset. "
+                f"Available tasks: {len(challenges)}"
+            )
+
+        task_data = challenges[task_id]
+
+        # Parse training examples
+        train = [Example(**ex) for ex in task_data["train"]]
+
+        # Parse test inputs (outputs are not provided in test set)
+        test = [Input(**ex) for ex in task_data["test"]]
+
+        return Challenge(task_id=task_id, train=train, test=test)
 
 
 COLOR_MAP: dict[int, str] = {

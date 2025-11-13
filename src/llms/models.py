@@ -59,6 +59,7 @@ class Model(str, Enum):
     groq_gpt_oss_120b = "openai/gpt-oss-120b"
 
     local_gpt_oss_20b = "openai/gpt-oss-20b"
+    local_qwen3_32b = "Qwen/Qwen3-32B"
 
 
 class ModelConfig(BaseModel):

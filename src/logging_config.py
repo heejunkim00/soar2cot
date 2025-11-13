@@ -46,10 +46,15 @@ logfire.configure(
 
 
 def _get_default_log_file_path() -> Path:
-    # Default to project_root/logs/arc.log
+    # Default to project_root/logs/arc_TIMESTAMP.log (separate file per run)
     # This file resides in project_root/src/logging_config.py
     project_root = Path(__file__).resolve().parents[1]
-    return project_root / "logs" / "arc.log"
+
+    # Use RUN_TIMESTAMP env var if set, otherwise use current timestamp
+    from datetime import datetime
+    timestamp = os.environ.get("RUN_TIMESTAMP", datetime.now().strftime("%Y%m%d_%H%M%S"))
+
+    return project_root / "logs" / f"arc_{timestamp}.log"
 
 
 LOG_FILE_PATH = Path(os.environ.get("LOG_FILE", _get_default_log_file_path()))

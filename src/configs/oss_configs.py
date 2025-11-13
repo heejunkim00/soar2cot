@@ -41,7 +41,7 @@ local_gpt_oss_20b_model = Model.local_gpt_oss_20b
 local_gpt_oss_20b_config = RunConfig(
     final_follow_model=local_gpt_oss_20b_model,
     final_follow_times=3,
-    max_concurrent_tasks=4,
+    max_concurrent_tasks=4,  # Reduced to 4 to prevent vLLM overload
     steps=[
         Step(
             instruction_model=local_gpt_oss_20b_model,

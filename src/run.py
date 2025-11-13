@@ -4,10 +4,15 @@ import os
 import traceback
 import typing as T
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 import asyncpg
 from pydantic import BaseModel, TypeAdapter
+
+# Set RUN_TIMESTAMP before importing logging_config so log file has correct timestamp
+RUN_TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
+os.environ["RUN_TIMESTAMP"] = RUN_TIMESTAMP
 
 from src.async_utils.semaphore_monitor import MonitoredSemaphore
 from src.configs.models import RunConfig, Step, StepRevision, StepRevisionPool
@@ -18,18 +23,165 @@ from src.log import log
 from src.logging_config import generate_run_id, set_task_id
 from src.main import (
     GRID,
-    INTUITIVE_PROMPT,
     Example,
     InstructionsResponse,
+    StructuredInstructionsResponse,
     Model,
     ReviseInstructionsResponse,
     contents_from_challenge,
+    contents_from_challenge_with_code,
     output_grid_from_instructions,
+)
+from src.prompts import (
+    INTUITIVE_PROMPT,
+    INTUITIVE_PROMPT_WITH_CODE,
+    STRUCTURED_PROMPT_WITH_CODE,
+    REVISION_PROMPT,
+    SYNTHESIS_PROMPT,
 )
 from src.models import Challenge, Input
 from src.utils import random_str
+from src.soar_loader import (
+    load_soar_data,
+    load_soar_data_labeled,
+    filter_original_data,
+    filter_hindsight_data,
+    group_soar_by_task,
+    create_challenge_from_soar,
+)
+from src.progress_tracker import ProgressTracker
 
 TT = T.TypeVar("TT")
+
+# Global SOAR metadata context for current task
+SOAR_METADATA_CONTEXT: dict[str, any] = {}
+
+# Prompt logging configuration
+# RUN_TIMESTAMP is already defined at top of file and set in environment
+RUN_LOG_DIR = Path(f"/data/hjkim/soar2cot/logs/run_{RUN_TIMESTAMP}")
+RUN_LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+# Track counts per function
+_function_save_counts = {
+    "get_instructions_from_challenge": 0,
+    "get_revised_instructions": 0,
+    "get_pooling_instruction_from_scores": 0,
+    "get_score_from_instructions": 0,
+}
+MAX_SAMPLES_PER_FUNCTION = 5  # Save first 5 samples per function
+
+# Track truncated responses separately
+_truncated_save_counts = {
+    "get_instructions_from_challenge": 0,
+    "get_revised_instructions": 0,
+    "get_pooling_instruction_from_scores": 0,
+    "get_score_from_instructions": 0,
+}
+MAX_TRUNCATED_SAMPLES = 10  # Save first 10 truncated samples per function
+
+
+def _save_llm_interaction(
+    function_name: str,
+    task_id: str,
+    messages: list[dict],
+    response: str,
+    metadata: dict = None,
+    is_truncated: bool = False,
+):
+    """
+    Save LLM prompt and response to function-specific directory.
+
+    Args:
+        function_name: Name of the calling function
+        task_id: Task ID being processed
+        messages: Prompt messages sent to LLM
+        response: LLM response
+        metadata: Additional metadata to log (optional)
+        is_truncated: Whether response was truncated due to token limit
+    """
+    global _function_save_counts, _truncated_save_counts
+
+    # For truncated responses, save to separate directory
+    if is_truncated:
+        if _truncated_save_counts[function_name] >= MAX_TRUNCATED_SAMPLES:
+            return
+
+        _truncated_save_counts[function_name] += 1
+        count = _truncated_save_counts[function_name]
+
+        # Create truncated-specific subdirectory
+        func_dir = RUN_LOG_DIR / f"{function_name}_TRUNCATED"
+        func_dir.mkdir(exist_ok=True)
+
+        # Format filenames with TRUNCATED prefix
+        prompt_file = func_dir / f"TRUNC_{count:03d}_task_{task_id}_prompt.txt"
+        response_file = func_dir / f"TRUNC_{count:03d}_task_{task_id}_response.txt"
+    else:
+        # Normal logging
+        if _function_save_counts[function_name] >= MAX_SAMPLES_PER_FUNCTION:
+            return
+
+        _function_save_counts[function_name] += 1
+        count = _function_save_counts[function_name]
+
+        # Create function-specific subdirectory
+        func_dir = RUN_LOG_DIR / function_name
+        func_dir.mkdir(exist_ok=True)
+
+        # Format filenames
+        prompt_file = func_dir / f"{count:03d}_task_{task_id}_prompt.txt"
+        response_file = func_dir / f"{count:03d}_task_{task_id}_response.txt"
+
+    # Save prompt
+    with open(prompt_file, "w", encoding="utf-8") as f:
+        f.write("=" * 80 + "\n")
+        if is_truncated:
+            f.write(f"⚠️  TRUNCATED RESPONSE SAMPLE #{count} ⚠️\n")
+        else:
+            f.write(f"PROMPT SAMPLE #{count}\n")
+        f.write(f"Function: {function_name}\n")
+        f.write(f"Task ID: {task_id}\n")
+        f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        if is_truncated:
+            f.write(f"⚠️  WARNING: Response was truncated due to token limit\n")
+        if metadata:
+            f.write(f"Metadata: {metadata}\n")
+        f.write("=" * 80 + "\n\n")
+
+        for msg in messages:
+            f.write(f"ROLE: {msg['role']}\n")
+            f.write("-" * 80 + "\n")
+
+            for content in msg['content']:
+                if content['type'] in ['input_text', 'output_text']:
+                    f.write(content['text'] + "\n\n")
+                elif content['type'] == 'input_grid':
+                    f.write(f"[Grid: {content.get('label', 'unlabeled')}]\n")
+                    if 'grid' in content:
+                        for row in content['grid']:
+                            f.write(" ".join(str(cell) for cell in row) + "\n")
+                    f.write("\n")
+
+            f.write("\n")
+
+    # Save response
+    with open(response_file, "w", encoding="utf-8") as f:
+        f.write("=" * 80 + "\n")
+        f.write(f"RESPONSE SAMPLE #{count}\n")
+        f.write(f"Function: {function_name}\n")
+        f.write(f"Task ID: {task_id}\n")
+        f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write("=" * 80 + "\n\n")
+        f.write(str(response))
+
+    log.info(
+        f"Saved LLM interaction",
+        function=function_name,
+        task_id=task_id,
+        count=count,
+        prompt_file=str(prompt_file),
+        response_file=str(response_file),
+    )
 
 
 def filter_out_exceptions(lst: list[TT | Exception], description: str) -> list[TT]:
@@ -54,20 +206,10 @@ class ExampleScore(BaseModel):
     response_output_grid: GRID
     score: float
     model: Model
+    is_truncated: bool = False  # Whether LLM response was truncated
 
 
-REVISION_PROMPT = """
-Your previous instructions were applied to the training input grids, but they did not produce the correct output grids.
-
-Below you'll see what outputs were generated when following your instructions. Compare these incorrect outputs with the correct outputs to identify where your instructions went wrong.
-
-Based on this feedback, provide updated instructions that correctly describe the transformation pattern. Your revised instructions must:
-- Fix the specific errors you observe
-- Still work correctly for ALL training examples
-- Remain clear, intuitive, and general
-
-Analyze the differences between the incorrect outputs and the correct outputs to understand the true pattern, then write improved instructions.
-""".strip()
+# REVISION_PROMPT is now imported from src.prompts
 
 
 class InstructionsScore(BaseModel):
@@ -79,6 +221,13 @@ class InstructionsScore(BaseModel):
     score: float
 
     step: Step | StepRevision | StepRevisionPool
+
+    # SOAR metadata (optional)
+    soar_code: str | None = None
+    soar_source_model: str | None = None
+    soar_generation: int | None = None
+    soar_round_index: int | None = None
+    is_hindsight: bool = False
 
     async def save_to_db(self, c: Challenge) -> None:
         # Get database connection string from environment variable
@@ -106,11 +255,14 @@ class InstructionsScore(BaseModel):
                 {**self.step.model_dump(), "type": type(self.step).__name__}
             )
 
-            # Insert the record - will raise exception if insert fails
+            # Insert the record with SOAR metadata - will raise exception if insert fails
             await conn.execute(
                 """
-                INSERT INTO instructions (id, instructions, model, example_scores, score, task_id, task_hash, step)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                INSERT INTO instructions (
+                    id, instructions, model, example_scores, score, task_id, task_hash, step,
+                    soar_code, soar_source_model, soar_generation, soar_round_index, is_hindsight
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 """,
                 self.id,
                 self.instructions,
@@ -120,6 +272,11 @@ class InstructionsScore(BaseModel):
                 c.task_id,
                 str(hash(c)),  # Convert hash to string
                 step_json,
+                self.soar_code,
+                self.soar_source_model,
+                self.soar_generation,
+                self.soar_round_index,
+                self.is_hindsight,
             )
         finally:
             # Always close the connection
@@ -170,13 +327,23 @@ class InstructionsScore(BaseModel):
             },
         ]
 
-        return (
-            await get_next_structure(
-                structure=ReviseInstructionsResponse,
-                messages=messages,
-                model=step.instruction_model,
-            )
-        ).revised_instructions
+        response, is_truncated = await get_next_structure(
+            structure=ReviseInstructionsResponse,
+            messages=messages,
+            model=step.instruction_model,
+        )
+
+        # Log prompt and response
+        _save_llm_interaction(
+            function_name="get_revised_instructions",
+            task_id=c.task_id,
+            messages=messages,
+            response=response.revised_instructions,
+            metadata={"original_instructions": self.instructions},
+            is_truncated=is_truncated,
+        )
+
+        return response.revised_instructions
 
 
 def get_grid_similarity(
@@ -285,7 +452,7 @@ async def get_example_score(
     from src.models import COLOR_MAP
     from src.viz import viz_many
 
-    grid_output = await output_grid_from_instructions(
+    grid_output, is_truncated = await output_grid_from_instructions(
         instructions=instructions,
         training_examples=training_examples,
         test_input_grid=test_example.input,
@@ -320,6 +487,7 @@ async def get_example_score(
         response_output_grid=grid_output,
         score=similarity_score,
         model=model,
+        is_truncated=is_truncated,
     )
     return example_score
 
@@ -328,6 +496,44 @@ async def score_instructions_on_challenge(
     c: Challenge, instructions: str, step: Step | StepRevision | StepRevisionPool
 ) -> InstructionsScore:
     with log.span("score_instructions", step_type=type(step).__name__):
+        # Initialize sample_messages to None (will be set if we need to log)
+        sample_messages = None
+
+        # Build messages for one example to log (we'll log the first training example)
+        if len(c.train) > 0 and _function_save_counts["get_score_from_instructions"] < MAX_SAMPLES_PER_FUNCTION:
+            from src.main import contents_from_example, AGENT_FOLLOW_INSTRUCTIONS_PROMPT, contents_from_grid
+
+            # Build messages similar to output_grid_from_instructions
+            temp_test = c.train[0]
+            temp_train = c.train[1:]
+            contents_from_examples: list[dict] = []
+            for i, example in enumerate(temp_train):
+                contents_from_examples.extend(
+                    contents_from_example(
+                        example=example,
+                        example_number=i + 1,
+                        include_base64=step.include_base64,
+                        attempt=None,
+                        use_diffs=step.use_diffs,
+                    )
+                )
+            sample_messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": AGENT_FOLLOW_INSTRUCTIONS_PROMPT},
+                        {"type": "input_text", "text": f"\nInstructions:\n{instructions}"},
+                        *contents_from_examples,
+                        *contents_from_grid(
+                            grid=temp_test.input,
+                            grid_label="Test Input Grid",
+                            include_base64=step.include_base64,
+                        ),
+                        {"type": "input_text", "text": "Test Output Grid:"},
+                    ],
+                }
+            ]
+
         futures: list = []
         for i_train in range(len(c.train)):
             temp_test = c.train[i_train]
@@ -348,6 +554,24 @@ async def score_instructions_on_challenge(
         example_scores = filter_out_exceptions(
             lst=example_scores, description="Exception in get_score_from_instructions"
         )
+
+        # Log the first example's output (representative response)
+        if len(example_scores) > 0 and sample_messages is not None:
+            response_grid = example_scores[0].response_output_grid
+            response_str = "Output Grid:\n"
+            for row in response_grid:
+                response_str += " ".join(str(cell) for cell in row) + "\n"
+            response_str += f"\nScore: {example_scores[0].score}"
+
+            _save_llm_interaction(
+                function_name="get_score_from_instructions",
+                task_id=c.task_id,
+                messages=sample_messages,
+                response=response_str,
+                metadata={"instructions": instructions},
+                is_truncated=example_scores[0].is_truncated,
+            )
+
         score = (
             sum(s.score for s in example_scores) / len(example_scores)
             if example_scores
@@ -367,6 +591,12 @@ async def score_instructions_on_challenge(
             score=score,
             model=step.instruction_model,
             step=step,
+            # Add SOAR metadata from global context
+            soar_code=SOAR_METADATA_CONTEXT.get("soar_code"),
+            soar_source_model=SOAR_METADATA_CONTEXT.get("soar_source_model"),
+            soar_generation=SOAR_METADATA_CONTEXT.get("soar_generation"),
+            soar_round_index=SOAR_METADATA_CONTEXT.get("soar_round_index"),
+            is_hindsight=SOAR_METADATA_CONTEXT.get("is_hindsight", False),
         )
         await instructions_score.save_to_db(c=c)
         return instructions_score
@@ -382,42 +612,71 @@ async def get_score_from_instructions(
     return instructions_score
 
 
-async def get_instructions_from_challenge(c: Challenge, step: Step) -> str:
+async def get_instructions_from_challenge(
+    c: Challenge, step: Step, python_code: str
+) -> str:
     with log.span("get_instructions_from_challenge", step=step.model_dump()):
         messages = [
             {
                 "role": "user",
                 "content": [
-                    {"type": "input_text", "text": INTUITIVE_PROMPT},
-                    *contents_from_challenge(
+                    {"type": "input_text", "text": STRUCTURED_PROMPT_WITH_CODE},
+                    *contents_from_challenge_with_code(
                         training_examples=c.train,
                         training_example_attempts=None,
                         test_inputs=c.test,
                         include_base64=step.include_base64,
                         use_diffs=step.use_diffs,
+                        python_code=python_code,
                     ),
                 ],
             }
         ]
-        instructions = await get_next_structure(
-            structure=InstructionsResponse,
+
+        structured_response, is_truncated = await get_next_structure(
+            structure=StructuredInstructionsResponse,
             messages=messages,
             model=step.instruction_model,
         )
-        return instructions.instructions
+
+        # Combine the two parts into a single instruction string
+        combined_instructions = f"""## Input/Output Analysis
+
+{structured_response.input_output_analysis}
+
+## Transformation Method
+
+{structured_response.transformation_method}"""
+
+        # Log prompt and response
+        _save_llm_interaction(
+            function_name="get_instructions_from_challenge",
+            task_id=c.task_id,
+            messages=messages,
+            response=combined_instructions,
+            metadata=SOAR_METADATA_CONTEXT,
+            is_truncated=is_truncated,
+        )
+
+        return combined_instructions
 
 
 async def get_instruction_score_from_challenge(
-    c: Challenge, step: Step
+    c: Challenge, step: Step, python_code: str
 ) -> InstructionsScore:
-    instructions = await get_instructions_from_challenge(c=c, step=step)
+    instructions = await get_instructions_from_challenge(
+        c=c, step=step, python_code=python_code
+    )
     log.debug("Instructions generated", instructions=instructions)
     return await get_score_from_instructions(c=c, instructions=instructions, step=step)
 
 
-async def get_instruction_scores(c: Challenge, step: Step) -> list[InstructionsScore]:
+async def get_instruction_scores(
+    c: Challenge, step: Step, python_code: str
+) -> list[InstructionsScore]:
     futures = [
-        get_instruction_score_from_challenge(c=c, step=step) for _ in range(step.times)
+        get_instruction_score_from_challenge(c=c, step=step, python_code=python_code)
+        for _ in range(step.times)
     ]
     results: list[InstructionsScore] = await asyncio.gather(
         *futures, return_exceptions=True
@@ -427,26 +686,7 @@ async def get_instruction_scores(c: Challenge, step: Step) -> list[InstructionsS
     )
 
 
-SYNTHESIS_PROMPT = """
-Multiple expert puzzle solvers have attempted to describe the transformation pattern for these grids. Each attempt captured some aspects correctly but failed in other ways.
-
-Below you'll find:
-- Each set of proposed instructions
-- The outputs produced when following those instructions
-- How those outputs differ from the correct answers
-
-Your task is to analyze why each approach partially failed and synthesize a complete, correct set of instructions.
-
-By examining multiple flawed attempts, you can:
-- Identify what each approach got right
-- Understand what each approach missed
-- Recognize common misconceptions about the pattern
-- Build comprehensive instructions that avoid all these pitfalls
-
-Study the patterns of success and failure across all attempts, then write instructions that correctly describe the complete transformation rule that works for ALL training examples.
-
-Your final instructions should be clear, intuitive, and capture the true underlying pattern.
-    """.strip()
+# SYNTHESIS_PROMPT is now imported from src.prompts
 
 
 async def get_pooling_instruction_from_scores(
@@ -494,13 +734,23 @@ async def get_pooling_instruction_from_scores(
         },
     ]
 
-    return (
-        await get_next_structure(
-            structure=ReviseInstructionsResponse,
-            messages=messages,
-            model=step.instruction_model,
-        )
-    ).revised_instructions
+    response, is_truncated = await get_next_structure(
+        structure=ReviseInstructionsResponse,
+        messages=messages,
+        model=step.instruction_model,
+    )
+
+    # Log prompt and response
+    _save_llm_interaction(
+        function_name="get_pooling_instruction_from_scores",
+        task_id=c.task_id,
+        messages=messages,
+        response=response.revised_instructions,
+        metadata={"num_scores": len(scores)},
+        is_truncated=is_truncated,
+    )
+
+    return response.revised_instructions
 
 
 class Guess(BaseModel):
@@ -584,20 +834,21 @@ async def get_diverse_attempts(
             )
         )
     log.debug("scores to use for final grids", scores=scores_to_use)
-    _final_output_grids: list[GRID] = await asyncio.gather(
+    _final_output_grids_with_truncation: list[tuple[GRID, bool]] = await asyncio.gather(
         *futures, return_exceptions=True
     )
     final_output_grids_and_scores: list[tuple[GRID, InstructionsScore]] = []
-    for i, g in enumerate(_final_output_grids):
-        if isinstance(g, Exception):
+    for i, result in enumerate(_final_output_grids_with_truncation):
+        if isinstance(result, Exception):
             log.error(
-                f"FINAL OUTPUT GRID GETTING: {type(g).__name__}",
-                error_type=type(g).__name__,
-                error_message=str(g),
+                f"FINAL OUTPUT GRID GETTING: {type(result).__name__}",
+                error_type=type(result).__name__,
+                error_message=str(result),
                 traceback=traceback.format_exc(),
             )
         else:
-            final_output_grids_and_scores.append((g, scores_to_use[i]))
+            grid, is_truncated = result  # Unpack tuple (grid, is_truncated)
+            final_output_grids_and_scores.append((grid, scores_to_use[i]))
 
     if not final_output_grids_and_scores:
         raise Exception("No final output grids!!!")
@@ -658,7 +909,9 @@ async def return_answer(
     return first_prediction_guess, second_prediction_guess
 
 
-async def get_answer_grids(*, c: Challenge, config: RunConfig) -> tuple[Guess, Guess]:
+async def get_answer_grids(
+    *, c: Challenge, config: RunConfig, python_code: str
+) -> tuple[Guess, Guess]:
     if os.environ.get("VIZ", "0") == "1":
         c.viz()
     instruction_scores: list[InstructionsScore] = []
@@ -666,7 +919,9 @@ async def get_answer_grids(*, c: Challenge, config: RunConfig) -> tuple[Guess, G
     for step in config.steps:
         with log.span("step starting", step=step):
             if isinstance(step, Step):
-                instruction_scores.extend(await get_instruction_scores(c=c, step=step))
+                instruction_scores.extend(
+                    await get_instruction_scores(c=c, step=step, python_code=python_code)
+                )
             else:
                 futures = []
                 if isinstance(step, StepRevision):
@@ -795,6 +1050,7 @@ async def solve_challenge(
     temp_attempts_dir: Path,
     solution_grids: list[GRID] | None,
     config: RunConfig,
+    python_code: str,
 ) -> float:
     if os.getenv("USE_TASK_ID", "0") == "1":
         task_id_to_use = c.task_id
@@ -806,7 +1062,9 @@ async def solve_challenge(
     log.info("Starting challenge")
 
     with log.span("solve_challenge"):
-        first_guess_obj, second_guess_obj = await get_answer_grids(c=c, config=config)
+        first_guess_obj, second_guess_obj = await get_answer_grids(
+            c=c, config=config, python_code=python_code
+        )
     # now write these to attempts path
 
     challenge_solutions: list[ChallengeSolution] = []
@@ -830,7 +1088,7 @@ async def solve_challenge(
         .decode("utf-8")
     )
 
-    if solution_grids:
+    if solution_grids is not None and len(solution_grids) > 0:
         final_scores: list[float] = []
         for guess_obj in [first_guess_obj, second_guess_obj]:
             correct = 0
@@ -839,7 +1097,27 @@ async def solve_challenge(
             for i in range(len(solution_grids)):
                 answer_grid = guess_obj.grids[i]
                 solution_grid = solution_grids[i]
-                if answer_grid == solution_grid:
+
+                # Deep convert to lists handling all numpy types (arrays and scalars)
+                import numpy as np
+                import json
+
+                def deep_convert_to_list(obj):
+                    """Recursively convert numpy arrays and scalars to native Python types"""
+                    if isinstance(obj, np.ndarray):
+                        return [deep_convert_to_list(item) for item in obj]
+                    elif isinstance(obj, (list, tuple)):
+                        return [deep_convert_to_list(item) for item in obj]
+                    elif isinstance(obj, (np.integer, np.floating)):
+                        return obj.item()
+                    else:
+                        return obj
+
+                answer_grid_list = deep_convert_to_list(answer_grid)
+                solution_grid_list = deep_convert_to_list(solution_grid)
+
+                # Use json.dumps for reliable deep comparison
+                if json.dumps(answer_grid_list, sort_keys=True) == json.dumps(solution_grid_list, sort_keys=True):
                     correct += 1
                     log.debug(f"Grid {i} matches")
                     guess_scores.append(1)
@@ -875,6 +1153,7 @@ async def solve_challenges(
     config: RunConfig,
     attempts_path: Path,
     temp_attempts_dir: Path,
+    python_code_map: dict[str, str],
 ) -> float:
     # Create semaphore to limit concurrent tasks
     semaphore = MonitoredSemaphore(config.max_concurrent_tasks, name="run_semaphore")
@@ -887,12 +1166,23 @@ async def solve_challenges(
     ) -> float:
         async with semaphore:
             await asyncio.sleep(sleep_for)
+
+            # Get python_code for this challenge
+            python_code = python_code_map.get(challenge.task_id)
+            if python_code is None:
+                log.warning(
+                    "No SOAR python code found for task, skipping",
+                    task_id=challenge.task_id,
+                )
+                return -1
+
             return await solve_challenge(
                 c=challenge,
                 solution_grids=solution_grids,
                 config=config,
                 attempts_path=attempts_path,
                 temp_attempts_dir=temp_attempts_dir,
+                python_code=python_code,
             )
 
     futures = []
@@ -942,46 +1232,143 @@ async def run_from_json(
     print(f"Starting new run with ID: {run_id}")
     print(f"{'=' * 50}\n")
 
-    raw_challenges: dict[str, dict] = json.loads(challenges_path.read_text())
-    root_challenges: dict[str, Challenge] = {
-        k: Challenge.model_validate({**v, "task_id": k})
-        for k, v in raw_challenges.items()
-    }
-    if task_ids:
-        root_challenges = {k: v for k, v in root_challenges.items() if k in task_ids}
-    challenges_list = list(root_challenges.values())
-    if limit:
-        challenges_list = challenges_list[offset : offset + limit]
+    # Initialize progress tracker
+    progress = ProgressTracker()
+    log.info("Progress tracker initialized", stats=progress.get_stats())
 
-    # now sort challenges by their length
-    challenges_list = sorted(challenges_list, key=lambda x: len(str(x)))
+    # Load original SOAR data only (한 번만, 메모리 유지)
+    log.info("Loading original SOAR data")
+    soar_df = load_soar_data_labeled(
+        path=Path("/data/hjkim/soar2cot/data/soar_arc_train_5M_original.parquet"),
+        progress_tracker=progress,
+    )
 
-    if truth_solutions_path:
-        root_solutions = TypeAdapter(dict[str, list[list[list[int]]]]).validate_json(
-            truth_solutions_path.read_text()
-        )
-        solutions_list = [root_solutions[c.task_id] for c in challenges_list]
-    else:
-        solutions_list = None
+    if len(soar_df) == 0:
+        log.info("No unprocessed samples remaining!")
+        return
 
-    with log.span("run_challenges", run_id=run_id):
+    log.info(
+        "Labeled SOAR data loaded",
+        total_samples=len(soar_df),
+        unique_tasks=soar_df["task_id"].nunique(),
+        max_round=int(soar_df["round_index"].max()),
+    )
+
+    temp_attempts_dir.mkdir(exist_ok=True, parents=True)
+
+    # Round별 순회
+    max_round = int(soar_df["round_index"].max())
+
+    for round_idx in range(max_round + 1):
+        log.info("=" * 70)
+        log.info(f"ROUND {round_idx} / {max_round}")
+        log.info("=" * 70)
+
+        # 이번 round 데이터
+        round_df = soar_df[soar_df["round_index"] == round_idx]
+
+        if len(round_df) == 0:
+            log.info(f"Round {round_idx}: No samples to process, skipping")
+            continue
+
         log.info(
-            "Starting run",
-            config=config.model_dump(),
-            challenges_path=str(challenges_path),
-            num_challenges=len(root_challenges),
+            f"Round {round_idx}: Processing samples",
+            samples=len(round_df),
+            unique_tasks=round_df["task_id"].nunique(),
         )
 
-        temp_attempts_dir.mkdir(exist_ok=True, parents=True)
+        # Task별로 병렬 처리 (알파벳 순서)
+        # Create semaphore to limit concurrent tasks
+        semaphore = MonitoredSemaphore(config.max_concurrent_tasks, name="task_semaphore")
 
-        final_scores = await solve_challenges(
-            challenges=challenges_list,
-            attempts_path=attempts_path,
-            solution_grids_list=solutions_list,
-            config=config,
-            temp_attempts_dir=temp_attempts_dir,
+        async def process_single_task(task_id: str, task_row, sleep_for: int):
+            """Process a single task with semaphore for concurrency control"""
+            async with semaphore:
+                # Stagger task starts to avoid thundering herd
+                await asyncio.sleep(sleep_for)
+
+                try:
+                    # Set SOAR metadata in global context
+                    # Note: This is thread-safe in asyncio since we're in same thread
+                    global SOAR_METADATA_CONTEXT
+                    SOAR_METADATA_CONTEXT = {
+                        "soar_code": task_row["code"],
+                        "soar_source_model": task_row["model"],
+                        "soar_generation": int(task_row["generation"]),
+                        "soar_round_index": int(round_idx),
+                        "is_hindsight": False,  # Original 데이터는 항상 False
+                    }
+
+                    # Challenge 생성
+                    challenge = create_challenge_from_soar(
+                        task_id=task_id,
+                        predicted_train_outputs=task_row["predicted_train_output"],
+                        predicted_test_outputs=task_row["predicted_test_output"],
+                    )
+
+                    python_code = task_row["code"]
+                    data_type = "original"  # Original 데이터로 하드코딩
+                    solution_grids = task_row["predicted_test_output"]
+
+                    log.info(
+                        f"Processing task",
+                        task_id=task_id,
+                        round_index=round_idx,
+                        data_type=data_type,
+                    )
+
+                    # Challenge 처리
+                    await solve_challenge(
+                        c=challenge,
+                        attempts_path=attempts_path,
+                        temp_attempts_dir=temp_attempts_dir,
+                        solution_grids=solution_grids,
+                        config=config,
+                        python_code=python_code,
+                    )
+
+                    # 완료 표시
+                    progress.add_completed(task_id, round_idx, data_type)
+
+                    log.info(
+                        f"Task completed",
+                        task_id=task_id,
+                        round_index=round_idx,
+                        progress_stats=progress.get_stats(),
+                    )
+
+                except Exception as e:
+                    log.error(
+                        f"Failed to process task",
+                        task_id=task_id,
+                        round_index=round_idx,
+                        error=str(e),
+                        traceback="".join(
+                            traceback.format_exception(type(e), e, e.__traceback__)
+                        ),
+                    )
+
+        # Collect all tasks to process
+        futures = []
+        for i, task_id in enumerate(sorted(round_df["task_id"].unique())):
+            # task_ids 필터링 (설정되어 있으면)
+            if task_ids and task_id not in task_ids:
+                continue
+
+            task_row = round_df[round_df["task_id"] == task_id].iloc[0]
+            futures.append(process_single_task(task_id, task_row, sleep_for=i * 5))  # Increased from 2 to 5 seconds to reduce vLLM server load
+
+        # Process all tasks in parallel
+        log.info(
+            f"Starting parallel task processing",
+            total_tasks=len(futures),
+            max_concurrent=config.max_concurrent_tasks,
         )
-        log.info("Run completed", final_scores=final_scores)
+        await asyncio.gather(*futures, return_exceptions=True)
+
+        log.info(f"Round {round_idx} completed")
+
+    log.info("All rounds completed!", final_stats=progress.get_stats())
 
 
 async def run() -> None:
@@ -1023,11 +1410,21 @@ async def run() -> None:
     from src.configs.gpt_configs import gpt_config_prod
     from src.configs.grok_configs import grok_config_prod
     from src.configs.oss_configs import local_gpt_oss_20b_config, oss_config
+    from src.configs.qwen3_configs import local_qwen3_32b_config
+
+    # Select config based on MODEL_CONFIG environment variable
+    model_config_name = os.getenv("MODEL_CONFIG", "gpt-oss")
+    config_map = {
+        "gpt-oss": local_gpt_oss_20b_config,
+        "qwen3": local_qwen3_32b_config,
+    }
+    selected_config = config_map.get(model_config_name, local_gpt_oss_20b_config)
+    log.info(f"Using config: {model_config_name}", config=selected_config)
 
     await run_from_json(
         challenges_path=challenges_path,
         truth_solutions_path=solutions_path,
-        config=local_gpt_oss_20b_config,
+        config=selected_config,
         attempts_path=attempts_path,
         temp_attempts_dir=temp_attempts_path,
         limit=None,  # Run all 400 validation problems

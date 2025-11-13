@@ -1,29 +1,52 @@
-그러면 지금 
 
 
-
-이건 SOAR라는 논문에서 학습시킨 데이터셋인데 https://huggingface.co/datasets/julien31/soar_arc_train_5M
-/home/ubuntu/arc-lang-public/data 여기 디렉토리에 다운 받아주고 데이터가 어떻게 구성되어 있는 지 자세히 설명해줘
-
-
-그러면 기존 ARC 데이터셋과 구성이 어떻게 다른거야? 
-
-/data/m-soar/soar_arc_train_5M
-
-그러면 SOAR 데이터셋, ARC 데이터셋, jeremy 실행후 생성되는 데이터 셋에 대한 데이터 구성과 차이를 자세히 설명해줘 
-
-
-hindisight 데이터, original에서 task 수와 다양한 데이터 분포 분석을 하고 싶어 데이터를 불러와서 /home/ubuntu/arc-lang-public/heejun
-이 디렉토리 안에서 데이터 분석코드를 만들어줘 그리고 코드를 짜기 전에 먼저 어떻게 데이터를 분석할 지 논의해 보자 
-
+최종목표: 
 현재 jeremy 코드는 ARC 데이터만 주어졌을 때 instruction을 만들고 정답을 맞추는 instruction을 추출하는 것인데 
-내가 최종적으로 하고 싶은 것은 SOAR 데이터셋에 주어진 
+내가 최종적으로 하고 싶은 것은 SOAR 데이터셋에 original 데이터(correct_test_input이 true)부터 사용하여 기존 jeremy 프롬프트에 파이썬
+함수를 추가적으로 넣어서 instruction을 생성하는 걸 만들고 싶어
+
+  각 task 별로 400개를 순회하면서 original output인것부터 (hindisight가 아닌) 먼저 각 문제에 대해 jeremey 코드를 그대로 활용하여
+  instruction을 만들어내고 hindisight에 대해서도 predicted_test_output을 기준으로 데이터를 주고 instruction을 만들게 하고 싶어
+
+먼저 prompt가 어디에 존재하는 지 말해줘 
 
 
 
-그러면 SOAR 데이터에 hindisight relabeling이 된 데이터가 포함 되었는지 확인하고 싶은데 
 
-그러니까 correct_test_input이라는 column이 true일 떄 test 데이터에 대해서 올바른 solution이였다는거야? 
+이 데이터에 hindisight relabeling이 된 데이터가 섞여 있어서  correct_test_input이 [true] 일 때 
+- correct_test_input가 True, False가 다인지 
+- correct_train_input에서 전체가 다 True인 경우 
+- test가 true인 경우와 아닌 경우를 나눔 
 
-  correct_train_input: [True, True, True, True, True]
-  correct_test_input: [True]
+
+
+
+먼저 hindishight 데이터인지 아닌지 구분하기 위해 정의를 할 건데 correct_test_input가 true이면 맞다고 하고 싶어 그전에 
+
+
+해야할것
+
+- gpt-oss 120b에서 돌아가는 지
+- hindisight 라벨링 하기
+- 도중에 끊겨도 어디서부터 진행할 수 있는 지 체크하는 거 만들어두기
+- task 별로 생성할 수 있게하기
+- 데이터구조 어떻게 할 지 정하기 
+
+
+------- 데이터수정
+프롬프트 짜기 (억제하는 코드,
+시간 얼마나 걸리는 지 체크하기
+
+
+추가 해야할 것 
+- 프롬프트 예제를 끌 수도 있음 
+- Jeremy는 현재 틀린 instruction도 포함하는듯 ⇒ 이것도 사용? ⇒ 100% 아니면 버리는 걸로 
+- 최종 생성되는 수 조정하기 
+- 테스크 별로 하나씩 순회 
+-     - 코드 + 간단한 설명
+     - 코드의 핵심 로직만 요약
+- 도중에 꺼졌을 때 추적 가능하게 
+
+
+마지막 프롬프트
+soar_loader 구현 
