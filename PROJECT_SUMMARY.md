@@ -2,15 +2,15 @@
 
 ## Project Overview
 
-SOAR2COT는 ARC (Abstraction and Reasoning Corpus) 챌린지의 Python 코드 솔루션을 자연어 instructions로 변환하고, 이를 활용해 test case 예측을 수행하는 파이프라인입니다.
+SOAR2COT is a pipeline that transforms Python code solutions from the ARC (Abstraction and Reasoning Corpus) challenge into natural language instructions and uses them to predict test cases.
 
-**핵심 목표**: SOAR 데이터셋의 code-based solutions를 human-readable instructions로 전환하여, LLM이 자연어만으로 ARC 문제를 해결할 수 있는 능력을 평가합니다.
+**Core Objective**: Convert code-based solutions from the SOAR dataset into human-readable instructions to evaluate LLMs' ability to solve ARC problems using natural language only.
 
 ---
 
 ## Dataset Scale
 
-- **SOAR Solutions**: 4,926,487개 (400개 unique tasks)
+- **SOAR Solutions**: 4,926,487 solutions (400 unique tasks)
 - **ARC Validation**: 400 tasks
 - **Current Processing**:
   - GPT-OSS 20B: 70 tasks completed (469 instructions generated)
@@ -23,7 +23,7 @@ SOAR2COT는 ARC (Abstraction and Reasoning Corpus) 챌린지의 Python 코드 �
 ### Whole Process
 
 ```
-Step 1-3: Instructions 생성 및 개선
+Step 1-3: Instruction Generation and Refinement
 
 Step 1: Intuitive Instructions
   ├─ Input: Training examples + Python code
@@ -33,7 +33,7 @@ Step 1: Intuitive Instructions
 Step 2: Structured Instructions
   ├─ Input: Step 1 instructions + training examples
   ├─ Output: Refined structured instructions
-  └─ Scoring: Training accuracy 계산
+  └─ Scoring: Calculate training accuracy
 
 Step 3: Revision (Optional)
   ├─ Input: Best instructions from Step 2
@@ -53,23 +53,23 @@ Final Step: Test Predictions
 
 ```
 SOAR Data
-  └─> Challenge 생성
-       └─> Step 1-3: Instructions 생성/개선
+  └─> Challenge Creation
+       └─> Step 1-3: Instruction Generation/Refinement
             └─> InstructionsScore (training accuracy)
-                 └─> Step 4: Final answer 생성 (score=1.0인 것만)
-                      └─> Guess 객체 (2 attempts)
-                           └─> 정답 비교 (SOAR predicted_test_output)
-                                └─> Database 저장
-                                     ├─ instructions 테이블
-                                     ├─ guess 테이블
-                                     └─ scores 기록
+                 └─> Step 4: Final Answer Generation (score=1.0 only)
+                      └─> Guess Object (2 attempts)
+                           └─> Answer Comparison (SOAR predicted_test_output)
+                                └─> Database Storage
+                                     ├─ instructions table
+                                     ├─ guess table
+                                     └─ scores recording
 ```
 
 ---
 
 ## Database Schema
 
-### Instructions 테이블
+### Instructions Table
 ```sql
 CREATE TABLE instructions (
     id UUID PRIMARY KEY,
@@ -84,7 +84,7 @@ CREATE TABLE instructions (
 );
 ```
 
-### Guess 테이블
+### Guess Table
 ```sql
 CREATE TABLE guess (
     id UUID PRIMARY KEY,
@@ -121,16 +121,16 @@ Index(['task_id', 'python_code', 'instructions', 'training_score',
 - **Perfect Test Cases**: 25 tasks with score=1.0
 
 ### Key Insights
-1. **Training vs Test Gap**: 0.797 → 0.407 (약 49% 감소)
-   - Instructions가 training examples에 overfitting되는 경향
+1. **Training vs Test Gap**: 0.797 → 0.407 (approximately 49% decrease)
+   - Instructions tend to overfit to training examples
 
 2. **Perfect Cases Analysis**:
-   - 41개 tasks가 training score 1.0 달성
-   - 이 중 25개가 test score 1.0 달성 (61% generalization)
+   - 41 tasks achieved training score 1.0
+   - Of these, 25 achieved test score 1.0 (61% generalization)
 
 3. **Model Behavior**:
-   - Training accuracy가 높을수록 test accuracy도 높은 경향
-   - 하지만 완벽한 상관관계는 아님 (일부 tasks는 training 1.0이지만 test 실패)
+   - Higher training accuracy tends to correlate with higher test accuracy
+   - However, not a perfect correlation (some tasks with training 1.0 fail on test)
 
 ---
 
